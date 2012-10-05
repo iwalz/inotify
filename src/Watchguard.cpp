@@ -1,11 +1,11 @@
 #include "Watchguard.hpp"
 #include <iostream>
+#include <ctype.h>
 #include <string>
 #include <algorithm>
 #include <queue>
 #include <sys/inotify.h>
 #include <signal.h>
-#include "boost/lexical_cast.hpp"
 #include "boost/filesystem.hpp"
 
 #define EVENT_SIZE  ( sizeof (struct inotify_event) )
@@ -15,6 +15,8 @@ bool Watchguard::keeprunning = true;
 
 Watchguard::Watchguard() {
     this->fd = inotify_init();
+    this->dirList = new std::map<int, std::string>();
+    this->eventQueue = new std::queue<inotify_event*>();
 
     if(this->fd < 0) {
             std::cerr << "inotify init" << std::endl;
@@ -24,8 +26,6 @@ Watchguard::Watchguard() {
 void Watchguard::run(std::string argv) {
 	namespace bfs = boost::filesystem;
 
-	//int wd;
-	std::cout << "ARGV: " << argv << std::endl;
 	this->addDirectory(argv);
 
 	for(bfs::recursive_directory_iterator end, dir(argv);
@@ -54,14 +54,12 @@ void Watchguard::run(std::string argv) {
 int Watchguard::process_events() {
 	//while loop here
 	while(this->keeprunning) {
-		if(this->check_events() > 0) {
-			int r;
-			r = this->read_events();
-			if(r < 0) {
-				break;
-			} else {
-				this->handle_event(this->eventQueue.front());
-			}
+		int r;
+		r = this->read_events();
+		if(r < 0) {
+			break;
+		} else {
+			this->handle_event(this->eventQueue->front());
 		}
 	}
 	return 0;
@@ -75,9 +73,8 @@ int Watchguard::check_events() {
 int Watchguard::read_events() {
 	int count = 0;
 	char buffer[16384];
-	size_t buffer_i;
+	size_t buffer_i, r;
 	struct inotify_event *pevent;
-	ssize_t r;
 	size_t event_size;
 
 	r = read(this->fd, buffer, 16384);
@@ -91,11 +88,9 @@ int Watchguard::read_events() {
 		event_size =  offsetof (struct inotify_event, name) + pevent->len;
 
 		if(pevent->wd) {
-			this->eventQueue.push(pevent);
+			this->eventQueue->push(pevent);
 		}
-		//event = malloc (q_event_size);
-		//memmove (&(event->inot_ev), pevent, event_size);
-		//queue_enqueue (event, q);
+
 		buffer_i += event_size;
 		count++;
 	}
@@ -103,16 +98,29 @@ int Watchguard::read_events() {
 	return count;
 }
 void Watchguard::handle_event(inotify_event *event) {
-	ssize_t len, i = 0;
-
 	//Eventmanager stuff here
 	std::string action = "";
     std::string target = event->name;
 
+    int check = target.c_str()[0];
+
+    if(!isalnum(check)) {
+    	return;
+    }
+
+    std::map<int, std::string>::iterator it = this->dirList->find(event->wd);
+
+    action.append(it->second);
+    int size = action.size();
+    if(action.substr(size-1,1) != "/")
+    {
+    	action.append("/");
+    }
+
     if (event->len)
        action.append(event->name);
-    else
-       action.append(target);
+    //else
+       //action.append(target);
 
     if (event->mask & IN_ACCESS)
        action.append(" was read");
@@ -139,16 +147,18 @@ void Watchguard::handle_event(inotify_event *event) {
     if (event->mask & IN_OPEN)
        action.append(" was opened");
 
-    std::cout << target << " - " << action << std::endl;
+    std::cout << action << std::endl;
 
 }
 
 bool Watchguard::addDirectory(const std::string & directory) {
-	std::cout << directory << std::endl;
+		//std::cout << directory << std::endl;
 
-		this->wd = inotify_add_watch( this->fd, directory.c_str(), IN_ALL_EVENTS );
-		if(this->wd) {
-			this->dirList.push_back(directory);
+		int wd = inotify_add_watch( this->fd, directory.c_str(), IN_ALL_EVENTS );
+		if(wd) {
+			//std::cout << this->wd << ": " << directory << std::endl;
+			this->dirList->insert(std::pair<int, std::string>(wd, directory));
+			//this->dirList.insert(std::pair<int, std::string>(wdfoo, directory));
 		}
 
 
@@ -157,15 +167,14 @@ bool Watchguard::addDirectory(const std::string & directory) {
 
 bool Watchguard::cleanup() {
 	for(
-			std::vector<std::string>::const_iterator iter = this->dirList.begin();
-	    		iter != this->dirList.end();
+			std::map<int, std::string>::const_iterator iter = this->dirList->begin();
+	    		iter != this->dirList->end();
 	    		++iter
 	    	)
 	    {
-	    	//std::cout << iter->first << " - " << iter->second << std::endl;
-	    	//this->dirList.erase(*iter);
-	    	inotify_rm_watch( this->fd, this->wd);
+	    	inotify_rm_watch( this->fd, iter->first);
 	    }
+	delete this->dirList;
 
 	return true;
 }
@@ -221,3 +230,4 @@ void Watchguard::handleEvent(const std::string & target) {
 	   }
 
 }
+

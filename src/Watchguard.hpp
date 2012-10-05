@@ -7,7 +7,7 @@
 
 #ifndef WATCHGUARD
 #define WATCHGUARD
-#include <vector>
+#include <map>
 #include <string>
 #include <queue>
 #include <sys/inotify.h>
@@ -19,8 +19,9 @@ class Watchguard {
 	void handleEvent(const std::string & target);
 	bool addDirectory(const std::string & directory);
 	bool cleanup();
-	std::vector<std::string> dirList;
-	std::queue<inotify_event*> eventQueue;
+	std::map<int, std::string> *dirList;
+	std::map<int, std::string>::iterator it;
+	std::queue<inotify_event*> *eventQueue;
 	int fd;
 	int wd;
 	int process_events();
